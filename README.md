@@ -61,15 +61,24 @@ Tile conversion runs in parallel across CPU cores. A 1-minute video at 24fps = 1
 
 - Python 3.8+
 - ffmpeg in PATH
-- numpy, Pillow (`pip install numpy Pillow`)
-- pytube2 (optional, for URL downloads: `pip install pytube2`)
+- [uv](https://docs.astral.sh/uv/) (recommended — auto-installed by the launcher if missing)
 
 ### GUI Mode
 
-Double-click `converter/SNESVideoPlayer.bat`, or run:
+Double-click `converter/SNESVideoPlayer.bat` — it will install uv (if needed), create a virtual environment, install dependencies, and launch the GUI automatically.
+
+Or run manually:
 
 ```bash
 cd converter
+uv run videoplayer_converter.py
+```
+
+Without uv, you can install dependencies manually and run directly:
+
+```bash
+cd converter
+pip install numpy Pillow yt-dlp
 python videoplayer_converter.py
 ```
 
@@ -162,7 +171,7 @@ python tools/fxpak_push.py --no-boot                # upload only
 |------|---------|-------------|
 | `--cli` | — | Run in CLI mode (no GUI) |
 | `-i`, `--input` | — | Input video file |
-| `--url` | — | Download video from URL (requires `pytube2`) |
+| `--url` | — | Download video from URL (requires `yt-dlp`) |
 | `-o`, `--output` | — | Output .msu file path |
 | `-w`, `--workers` | 4 | Parallel tile conversion workers |
 | `--ffmpeg` | auto | Path to ffmpeg if not in PATH |
@@ -287,8 +296,9 @@ SNES-VideoPlayer/
 │   ├── segments.py               # Per-segment quality settings
 │   ├── msu_package.py            # .msu binary file writer
 │   ├── preview.py                # SNES frame preview reconstruction
-│   ├── video_download.py         # URL video download (pytube2)
-│   └── requirements.txt          # numpy, Pillow, pytube2
+│   ├── video_download.py         # URL video download (yt-dlp)
+│   ├── pyproject.toml            # Project dependencies (used by uv)
+│   └── requirements.txt          # numpy, Pillow, yt-dlp
 │
 ├── prebuilt/
 │   └── SNESVideoPlayer.sfc       # Pre-built ROM (ready to use)
