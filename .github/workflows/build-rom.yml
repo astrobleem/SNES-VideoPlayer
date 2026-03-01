@@ -43,11 +43,13 @@ jobs:
           g++ -s -o ../snesbrr.exe *.o
           chmod +x ../snesbrr.exe
 
-      - name: Set up wla-dx binaries
+      - name: Set up tool permissions
         run: |
           chmod +x rom/tools/wla-dx-9.5-svn/wla-65816
           chmod +x rom/tools/wla-dx-9.5-svn/wla-spc700
           chmod +x rom/tools/wla-dx-9.5-svn/wlalink/wlalink
+          chmod +x rom/tools/gracon.py
+          chmod +x rom/tools/gfx_converter.py
 
       - name: Build ROM
         run: cd rom && make clean && make
