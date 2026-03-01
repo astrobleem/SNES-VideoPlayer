@@ -1,0 +1,13 @@
+[project]
+name = "snes-videoplayer-converter"
+version = "1.0.0"
+description = "Converts standard video files to MSU-1 format for SNES playback"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "Pillow",
+    "yt-dlp",
+]
+
+[project.scripts]
+snes-videoplayer = "videoplayer_converter:main"

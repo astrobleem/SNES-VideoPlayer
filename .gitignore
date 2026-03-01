@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.venv/
 
 # ROM build artifacts (rebuild with: cd rom && wsl -e bash -c "make")
 rom/build/
