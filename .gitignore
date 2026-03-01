@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# ROM build artifacts (rebuild with: cd rom && wsl -e bash -c "make")
+rom/build/
+
+# Converter temp/output files
+*.msu
+*.pcm
+*.zip
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

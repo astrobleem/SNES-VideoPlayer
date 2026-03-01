@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:pytube.io)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(pip install:*)",
+      "Bash(xargs grep:*)",
+      "Bash(python3:*)",
+      "Bash(wsl:*)",
+      "Bash(xxd:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(cp:*)",
+      "WebFetch(domain:snes.nesdev.org)",
+      "WebFetch(domain:sneslab.net)",
+      "WebFetch(domain:en.wikibooks.org)",
+      "WebFetch(domain:wiki.superfamicom.org)",
+      "WebFetch(domain:jiggawatt.org)",
+      "Bash(gh repo:*)"
+    ]
+  }
+}

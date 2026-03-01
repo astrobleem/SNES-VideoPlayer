@@ -1,0 +1,145 @@
+
+  SCRIPT videoplayer
+
+.ACCU 16
+.INDEX 16
+
+  .def vpTextlayer hashPtr.1
+  .def vpSpc hashPtr.2
+  .def vpMsu1 hashPtr.3
+  ;hashPtr.4 = objBrightness (predefined in script.h)
+  .def vpPaused hashPtr.5
+
+  ;--- create SPC audio engine, upload samples ---
+  NEW Spc.CLS.PTR vpSpc
+  lda #0
+  CALL Spc.SpcIssueSamplePackUpload.MTD vpSpc
+
+  ;--- set up screen ---
+  NEW Brightness.CLS.PTR objBrightness
+  lda #BRIGHTNESS.NONE
+  CALL Brightness.set.MTD objBrightness
+
+  sep #$20
+  lda.b #BGMODE_MODE_1
+  sta.w ScreenMode
+  ;enable BG3 for text layer
+  lda.w MainScreen
+  ora.b #T_BG3_ENABLE
+  sta.w MainScreen
+  rep #$31
+
+  ;--- create text layer, write "PRESS START" ---
+  NEW Background.textlayer.8x8.CLS.PTR vpTextlayer
+  lda #T_pressStart.PTR
+  CALL Background.textlayer.8x8.print.MTD vpTextlayer
+  CALL Background.textlayer.8x8.flush.MTD vpTextlayer
+
+  ;--- play technique sound effect ---
+  lda #SAMPLE.0.TECHNIQUE
+  CALL Spc.SpcPlaySoundEffect.MTD vpSpc
+
+  ;--- fade in ---
+  lda #BRIGHTNESS.FULL
+  CALL Brightness.fadeTo.MTD objBrightness
+
+  ;wait for fade in
+  jsr SavePC
+  CALL Brightness.isDone.MTD objBrightness
+  bcs +
+    rts
++
+
+  ;--- wait for START ---
+  jsr SavePC
+  ldx #INPUT.DEVICE.ID.0
+  jsr core.input.get.trigger
+  and.w #JOY_BUTTON_START
+  bne +
+    rts
++
+
+  ;--- fade out ---
+  lda #BRIGHTNESS.NONE
+  CALL Brightness.fadeTo.MTD objBrightness
+
+  jsr SavePC
+  CALL Brightness.isDone.MTD objBrightness
+  bcs +
+    rts
++
+
+  ;--- kill text layer, clear palette ---
+  CALL Background.textlayer.8x8.kill.MTD vpTextlayer
+  jsr core.cgram.clear
+
+  ;--- create MSU-1 and play chapter 0 ---
+  NEW Msu1.CLS.PTR vpMsu1
+  lda #0
+  CALL Msu1.playVideo.MTD vpMsu1
+  stz.b vpPaused
+
+  ;--- fade in for video ---
+  lda #BRIGHTNESS.FULL
+  CALL Brightness.fadeTo.MTD objBrightness
+
+  ;--- wait for video to finish, with pause/unpause on START ---
+_videoLoop:
+  jsr SavePC
+
+  ;check START button for pause/unpause
+  ldx #INPUT.DEVICE.ID.0
+  jsr core.input.get.trigger
+  and.w #JOY_BUTTON_START
+  beq _videoNoToggle
+
+    ;toggle pause state
+    lda.b vpPaused
+    bne _doResume
+      ;pause
+      CALL Msu1.pause.MTD vpMsu1
+      lda #1
+      sta.b vpPaused
+      rts
+
+_doResume:
+      ;resume
+      CALL Msu1.resume.MTD vpMsu1
+      stz.b vpPaused
+      rts
+
+_videoNoToggle:
+  ;if paused, skip isDone check (pause sets videoPlaying=0 which isDone reads as done)
+  lda.b vpPaused
+  bne +
+    CALL Msu1.isDone.MTD vpMsu1
+    bcs _videoDone
++
+    rts
+
+_videoDone:
+
+  ;--- fade out ---
+  lda #BRIGHTNESS.NONE
+  CALL Brightness.fadeTo.MTD objBrightness
+
+  jsr SavePC
+  CALL Brightness.isDone.MTD objBrightness
+  bcs +
+    rts
++
+
+  ;--- kill MSU-1, restart video ---
+  CALL Msu1.kill.MTD vpMsu1
+  jsr core.cgram.clear
+
+  NEW Msu1.CLS.PTR vpMsu1
+  lda #0
+  CALL Msu1.playVideo.MTD vpMsu1
+  stz.b vpPaused
+
+  lda #BRIGHTNESS.FULL
+  CALL Brightness.fadeTo.MTD objBrightness
+
+  jmp _videoLoop
+

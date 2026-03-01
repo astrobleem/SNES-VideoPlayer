@@ -1,0 +1,17 @@
+/**
+* persistency-handler — stubbed for video player (no SRAM)
+*/
+.include "src/core/persistency.h"
+.section "persistency"
+
+core.persistency.init:
+  rts
+
+core.persistency.load:
+  clc
+  rts
+
+core.persistency.save:
+  rts
+
+.ends

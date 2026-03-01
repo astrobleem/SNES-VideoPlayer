@@ -1,0 +1,11 @@
+
+  SCRIPT main
+
+  ;create once to properly reset msu1 hardware
+  NEW Msu1.CLS.PTR hashPtr.1
+  CALL Msu1.kill.MTD hashPtr.1
+
+  NEW Script.CLS.PTR oopCreateNoPtr videoplayer
+
+  DIE
+
