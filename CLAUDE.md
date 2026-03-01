@@ -11,21 +11,22 @@ SNES-VideoPlayer converts standard video files into packages playable on real Su
 ### Run the converter (GUI)
 ```bash
 cd converter
-python videoplayer_converter.py
+uv run videoplayer_converter.py
 ```
 
 ### Run the converter (CLI)
 ```bash
 cd converter
-python videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --workers 8
+uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --workers 8
 
 # With per-segment quality settings
-python videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --segments-file segments.json
+uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --segments-file segments.json
 ```
 
 ### Install Python dependencies
 ```bash
-pip install numpy Pillow
+cd converter
+uv sync
 ```
 
 ### Build the ROM (only if modifying 65816 source)
@@ -86,6 +87,7 @@ The converter supports per-segment quality settings, allowing different parts of
 
 ## External Dependencies
 
+- **uv**: Python package manager. Auto-installed by `SNESVideoPlayer.bat` if missing. Manages venv and dependencies via `converter/pyproject.toml`.
 - **ffmpeg**: must be in PATH (or specified via `--ffmpeg`). Used for frame and audio extraction.
-- **Python 3.8+** with numpy and Pillow
+- **Python 3.8+** with numpy, Pillow, and yt-dlp (managed by uv)
 - **WLA-DX 9.5**: bundled in `rom/tools/`, only needed for ROM builds
