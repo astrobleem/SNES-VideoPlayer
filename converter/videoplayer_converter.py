@@ -74,6 +74,22 @@ def run_cli(args):
         except Exception as e:
             print(f"Error loading segments file: {e}")
             sys.exit(1)
+    elif args.grayscale or args.shared_palette:
+        # Create a default segment list with the flags so the pipeline picks them up
+        from segments import SegmentList
+        from frame_extract import get_video_info, find_ffmpeg
+        ffmpeg = args.ffmpeg or find_ffmpeg()
+        info = get_video_info(args.input, ffmpeg)
+        vid_duration = info['duration'] if info else 60.0
+        segments = SegmentList.create_default(
+            vid_duration,
+            dither_method=args.dither,
+            engine=args.engine,
+            num_palettes=args.num_palettes,
+            max_tiles=max(1, min(384, args.max_tiles)),
+            grayscale=args.grayscale,
+            shared_palette=args.shared_palette,
+        )
 
     title = args.title or MSU_TITLE.strip()
     title = "%-21.21s" % title
@@ -104,6 +120,10 @@ def run_cli(args):
     print(f"  Max tiles: {max_tiles}")
     print(f"  Palettes: {args.num_palettes}")
     print(f"  Engine: {args.engine}")
+    if args.grayscale:
+        print("  Grayscale: enabled")
+    if args.shared_palette:
+        print("  Shared palette: enabled")
     if args.deinterlace:
         print("  Deinterlace: enabled")
     if args.start is not None:
@@ -190,6 +210,11 @@ Examples:
     parser.add_argument('--segments-file', type=str, default=None,
                         help='JSON file with per-segment quality settings '
                              '(overrides --dither/--max-tiles/--num-palettes/--engine)')
+    parser.add_argument('--grayscale', action='store_true',
+                        help='Convert frames to grayscale before processing')
+    parser.add_argument('--shared-palette', action='store_true',
+                        help='Compute one shared palette across the segment '
+                             'to reduce frame-to-frame dither swimming')
 
     args = parser.parse_args()
 

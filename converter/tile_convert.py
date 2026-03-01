@@ -109,6 +109,90 @@ def simple_kmeans(data, k, max_iter=20):
     return labels, centers
 
 
+# ---------- Shared palette computation ----------
+def compute_shared_palette(png_paths, num_palettes=MAX_PALETTES, grayscale=False):
+    """Compute a shared palette from multiple frames for temporal stability.
+
+    Samples colors and tile means from all provided frames, then builds
+    sub-palettes that work well across all of them. This prevents palette
+    shifts between frames, reducing dither "swimming".
+
+    Args:
+        png_paths: List of PNG file paths to sample from
+        num_palettes: Number of sub-palettes (1 or 2)
+        grayscale: If True, convert frames to grayscale before sampling
+
+    Returns:
+        List of sub-palettes, each a list of 16 BGR555 values (color 0 = 0x0000)
+    """
+    all_tile_means = []
+    all_tile_bgr555 = []  # list of (tile_index, set of bgr555 values)
+
+    tile_idx_offset = 0
+    for path in png_paths:
+        img = Image.open(path).convert('RGB')
+        if grayscale:
+            img = img.convert('L').convert('RGB')
+        rgb = np.array(img, dtype=np.float32)
+        H, W = rgb.shape[:2]
+        tiles_h, tiles_w = H // 8, W // 8
+
+        rgb5 = np.round(rgb * 31.0 / 255.0).clip(0, 31).astype(np.uint8)
+        rgb_q = rgb5.astype(np.float32) * (255.0 / 31.0)
+
+        tile_blocks = rgb_q.reshape(tiles_h, 8, tiles_w, 8, 3).transpose(0, 2, 1, 3, 4)
+        tile_means = tile_blocks.mean(axis=(2, 3))
+
+        for tr in range(tiles_h):
+            for tc in range(tiles_w):
+                all_tile_means.append(tile_means[tr, tc])
+                block = rgb5[tr * 8:(tr + 1) * 8, tc * 8:(tc + 1) * 8]
+                bgr_set = set()
+                for y in range(8):
+                    for x in range(8):
+                        r5, g5, b5 = int(block[y, x, 0]), int(block[y, x, 1]), int(block[y, x, 2])
+                        bgr = r5 | (g5 << 5) | (b5 << 10)
+                        bgr_set.add(bgr)
+                all_tile_bgr555.append(bgr_set)
+
+    all_tile_means = np.array(all_tile_means, dtype=np.float32)
+
+    # Cluster tiles into sub-palette groups by mean color
+    labels, _centers = simple_kmeans(all_tile_means, num_palettes)
+
+    # Build sub-palettes from colors in each cluster
+    sub_palettes = []
+    for p in range(num_palettes):
+        mask = labels == p
+        tile_indices = np.where(mask)[0]
+
+        bgr555_set = set()
+        for ti in tile_indices:
+            bgr555_set.update(all_tile_bgr555[ti])
+        bgr555_set.discard(0)
+
+        if len(bgr555_set) <= 15:
+            colors = sorted(bgr555_set)
+        else:
+            unique_list = sorted(bgr555_set)
+            unique_rgb = np.array([bgr555_to_rgb_float(c) for c in unique_list], dtype=np.float32)
+            clabels, ccenters = simple_kmeans(unique_rgb, 15)
+            colors = []
+            for c in ccenters:
+                colors.append(rgb_to_bgr555(int(round(c[0])), int(round(c[1])), int(round(c[2]))))
+            colors = sorted(set(colors))
+            if 0 in colors:
+                colors.remove(0)
+            colors = colors[:15]
+
+        full_palette = [0] + colors
+        while len(full_palette) < 16:
+            full_palette.append(0)
+        sub_palettes.append(full_palette)
+
+    return sub_palettes
+
+
 # ---------- Color space conversion ----------
 def rgb_to_bgr555(r, g, b):
     """Convert 8-bit RGB to SNES BGR555 (16-bit value)."""
@@ -443,7 +527,8 @@ def reduce_tiles_bytes(tile_data, tilemap_data, palette_bytes, max_tiles=MAX_TIL
 # ---------- Per-tile palette optimization with Floyd-Steinberg dithering ----------
 def per_tile_palette_optimize(png_path, pal_file, tile_file, map_file,
                               num_palettes=MAX_PALETTES,
-                              dither_method=DEFAULT_DITHER):
+                              dither_method=DEFAULT_DITHER,
+                              grayscale=False, shared_palette=None):
     """Convert full-color PNG to SNES tiles with sub-palettes + Floyd-Steinberg dithering.
 
     Algorithm:
@@ -453,8 +538,15 @@ def per_tile_palette_optimize(png_path, pal_file, tile_file, map_file,
     4. Build BGR555 lookup tables for O(1) nearest-color per sub-palette
     5. Floyd-Steinberg dithering across entire image
     6. Encode to SNES 4BPP tiles + tilemap + palette
+
+    Args:
+        grayscale: If True, convert image to grayscale before processing
+        shared_palette: Pre-computed sub-palettes (list of lists of BGR555 values).
+            If provided, skip per-frame palette building and use these instead.
     """
     img = Image.open(png_path).convert('RGB')
+    if grayscale:
+        img = img.convert('L').convert('RGB')
     rgb = np.array(img, dtype=np.float32)
     H, W = rgb.shape[:2]
     tiles_h, tiles_w = H // 8, W // 8
@@ -471,46 +563,56 @@ def per_tile_palette_optimize(png_path, pal_file, tile_file, map_file,
     labels, _centers = simple_kmeans(flat_means, num_palettes)
     tile_labels = labels.reshape(tiles_h, tiles_w)
 
-    # Build sub-palettes
+    # Build sub-palettes (or use shared palette if provided)
     sub_palettes = []
     sub_palette_rgb = np.zeros((num_palettes, 16, 3), dtype=np.float32)
 
-    for p in range(num_palettes):
-        mask = tile_labels == p
-        positions = np.argwhere(mask)
+    if shared_palette is not None:
+        # Use pre-computed shared palette
+        for p in range(num_palettes):
+            if p < len(shared_palette):
+                sub_palettes.append(list(shared_palette[p]))
+            else:
+                sub_palettes.append([0] * 16)
+            for ci, bgr in enumerate(sub_palettes[p]):
+                sub_palette_rgb[p, ci] = bgr555_to_rgb_float(bgr)
+    else:
+        for p in range(num_palettes):
+            mask = tile_labels == p
+            positions = np.argwhere(mask)
 
-        bgr555_set = set()
-        for tr, tc in positions:
-            block = rgb5[tr * 8:(tr + 1) * 8, tc * 8:(tc + 1) * 8]
-            for y in range(8):
-                for x in range(8):
-                    r5, g5, b5 = int(block[y, x, 0]), int(block[y, x, 1]), int(block[y, x, 2])
-                    bgr = r5 | (g5 << 5) | (b5 << 10)
-                    bgr555_set.add(bgr)
+            bgr555_set = set()
+            for tr, tc in positions:
+                block = rgb5[tr * 8:(tr + 1) * 8, tc * 8:(tc + 1) * 8]
+                for y in range(8):
+                    for x in range(8):
+                        r5, g5, b5 = int(block[y, x, 0]), int(block[y, x, 1]), int(block[y, x, 2])
+                        bgr = r5 | (g5 << 5) | (b5 << 10)
+                        bgr555_set.add(bgr)
 
-        bgr555_set.discard(0)
+            bgr555_set.discard(0)
 
-        if len(bgr555_set) <= 15:
-            colors = sorted(bgr555_set)
-        else:
-            unique_list = sorted(bgr555_set)
-            unique_rgb = np.array([bgr555_to_rgb_float(c) for c in unique_list], dtype=np.float32)
-            clabels, ccenters = simple_kmeans(unique_rgb, 15)
-            colors = []
-            for c in ccenters:
-                colors.append(rgb_to_bgr555(int(round(c[0])), int(round(c[1])), int(round(c[2]))))
-            colors = sorted(set(colors))
-            if 0 in colors:
-                colors.remove(0)
-            colors = colors[:15]
+            if len(bgr555_set) <= 15:
+                colors = sorted(bgr555_set)
+            else:
+                unique_list = sorted(bgr555_set)
+                unique_rgb = np.array([bgr555_to_rgb_float(c) for c in unique_list], dtype=np.float32)
+                clabels, ccenters = simple_kmeans(unique_rgb, 15)
+                colors = []
+                for c in ccenters:
+                    colors.append(rgb_to_bgr555(int(round(c[0])), int(round(c[1])), int(round(c[2]))))
+                colors = sorted(set(colors))
+                if 0 in colors:
+                    colors.remove(0)
+                colors = colors[:15]
 
-        full_palette = [0] + colors
-        while len(full_palette) < 16:
-            full_palette.append(0)
-        sub_palettes.append(full_palette)
+            full_palette = [0] + colors
+            while len(full_palette) < 16:
+                full_palette.append(0)
+            sub_palettes.append(full_palette)
 
-        for ci, bgr in enumerate(full_palette):
-            sub_palette_rgb[p, ci] = bgr555_to_rgb_float(bgr)
+            for ci, bgr in enumerate(full_palette):
+                sub_palette_rgb[p, ci] = bgr555_to_rgb_float(bgr)
 
     # Build BGR555 LUTs for O(1) nearest-color lookup per sub-palette
     all_bgr = np.arange(32768, dtype=np.uint16)
@@ -659,7 +761,8 @@ def per_tile_palette_optimize(png_path, pal_file, tile_file, map_file,
 
 # ---------- High-level conversion ----------
 def convert_frame(png_path, num_palettes=MAX_PALETTES, max_tiles=MAX_TILES,
-                  dither_method=DEFAULT_DITHER, engine=DEFAULT_ENGINE):
+                  dither_method=DEFAULT_DITHER, engine=DEFAULT_ENGINE,
+                  grayscale=False, shared_palette=None):
     """Convert one PNG frame to SNES tiles/tilemap/palette.
 
     Uses per-tile sub-palette optimization with configurable dithering.
@@ -679,7 +782,9 @@ def convert_frame(png_path, num_palettes=MAX_PALETTES, max_tiles=MAX_TILES,
         else:
             per_tile_palette_optimize(png_path, pal_file, tile_file, map_file,
                                       num_palettes=num_palettes,
-                                      dither_method=dither_method)
+                                      dither_method=dither_method,
+                                      grayscale=grayscale,
+                                      shared_palette=shared_palette)
             # Reduce tiles to fit in VRAM buffer
             reduce_tiles(tile_file, map_file, pal_file, max_tiles=max_tiles)
             # Pad tilemap
@@ -691,7 +796,8 @@ def convert_frame(png_path, num_palettes=MAX_PALETTES, max_tiles=MAX_TILES,
 
 
 def convert_frame_to_bytes(png_path, num_palettes=MAX_PALETTES, max_tiles=MAX_TILES,
-                           dither_method=DEFAULT_DITHER, engine=DEFAULT_ENGINE):
+                           dither_method=DEFAULT_DITHER, engine=DEFAULT_ENGINE,
+                           grayscale=False, shared_palette=None):
     """Convert one PNG frame to SNES data, returning raw bytes.
 
     Returns (tile_bytes, tilemap_bytes, palette_bytes) on success.
@@ -712,7 +818,9 @@ def convert_frame_to_bytes(png_path, num_palettes=MAX_PALETTES, max_tiles=MAX_TI
     else:
         per_tile_palette_optimize(png_path, pal_file, tile_file, map_file,
                                   num_palettes=num_palettes,
-                                  dither_method=dither_method)
+                                  dither_method=dither_method,
+                                  grayscale=grayscale,
+                                  shared_palette=shared_palette)
         reduce_tiles(tile_file, map_file, pal_file, max_tiles=max_tiles)
         pad_tilemap(map_file)
 

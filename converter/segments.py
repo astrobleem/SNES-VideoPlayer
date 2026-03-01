@@ -21,6 +21,8 @@ class Segment:
     engine: str             # 'builtin', 'superfamiconv'
     num_palettes: int       # 1 or 2
     max_tiles: int          # 1-384
+    grayscale: bool = False
+    shared_palette: bool = False
 
 
 class SegmentList:
@@ -37,7 +39,8 @@ class SegmentList:
     @classmethod
     def create_default(cls, duration: float, dither_method: str = 'floyd-steinberg',
                        engine: str = 'builtin', num_palettes: int = 2,
-                       max_tiles: int = 384) -> 'SegmentList':
+                       max_tiles: int = 384, grayscale: bool = False,
+                       shared_palette: bool = False) -> 'SegmentList':
         """Create a SegmentList with one segment covering the full duration."""
         seg = Segment(
             start_time=0.0,
@@ -46,6 +49,8 @@ class SegmentList:
             engine=engine,
             num_palettes=num_palettes,
             max_tiles=max_tiles,
+            grayscale=grayscale,
+            shared_palette=shared_palette,
         )
         return cls([seg])
 
@@ -104,6 +109,8 @@ class SegmentList:
             engine=seg.engine,
             num_palettes=seg.num_palettes,
             max_tiles=seg.max_tiles,
+            grayscale=seg.grayscale,
+            shared_palette=seg.shared_palette,
         )
         right = Segment(
             start_time=t,
@@ -112,6 +119,8 @@ class SegmentList:
             engine=seg.engine,
             num_palettes=seg.num_palettes,
             max_tiles=seg.max_tiles,
+            grayscale=seg.grayscale,
+            shared_palette=seg.shared_palette,
         )
 
         self.segments[idx] = left
@@ -171,6 +180,9 @@ class SegmentList:
     def from_json(cls, json_str: str) -> 'SegmentList':
         """Deserialize from JSON string."""
         data = json.loads(json_str)
+        for d in data:
+            d.setdefault('grayscale', False)
+            d.setdefault('shared_palette', False)
         segments = [Segment(**d) for d in data]
         return cls(segments)
 

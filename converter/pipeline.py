@@ -23,7 +23,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from frame_extract import extract_frames, get_extracted_frames, get_video_info, find_ffmpeg
 from audio_extract import extract_audio_from_video
-from tile_convert import (convert_frame, FRAME_WIDTH, FRAME_HEIGHT,
+from tile_convert import (convert_frame, compute_shared_palette,
+                          FRAME_WIDTH, FRAME_HEIGHT,
                           MAX_PALETTES, MAX_TILES,
                           DEFAULT_DITHER, DEFAULT_ENGINE)
 from msu_package import package_single_chapter, MSU_TITLE
@@ -254,6 +255,31 @@ class ConversionPipeline:
         if total == 0:
             return []
 
+        # Pre-compute shared palettes for segments that request it
+        shared_palettes = {}  # seg_idx -> list of sub-palettes
+        if self.segments is not None:
+            start_offset = self.start_time or 0.0
+            for seg_idx, seg in enumerate(self.segments.segments):
+                if not seg.shared_palette or seg.engine != 'builtin':
+                    continue
+                # Find frame index range for this segment
+                seg_frames = []
+                for i, png_path in enumerate(frames):
+                    t = start_offset + i / self.fps
+                    if seg.start_time <= t < seg.end_time:
+                        seg_frames.append(png_path)
+                if not seg_frames:
+                    continue
+                # Sample up to 20 evenly spaced frames
+                n_sample = min(20, len(seg_frames))
+                step = max(1, len(seg_frames) // n_sample)
+                sample_paths = [seg_frames[i * step] for i in range(n_sample)
+                                if i * step < len(seg_frames)]
+                logger.info("Computing shared palette for segment %d (%d sample frames)",
+                            seg_idx, len(sample_paths))
+                shared_palettes[seg_idx] = compute_shared_palette(
+                    sample_paths, seg.num_palettes, seg.grayscale)
+
         frame_data = [None] * total  # Preserve order
         completed = 0
         failed = 0
@@ -265,8 +291,11 @@ class ConversionPipeline:
             idx, png_path = idx_path
 
             # Per-frame segment lookup: use segment settings if available
+            f_grayscale = False
+            f_shared_palette = None
             if self.segments is not None:
                 start_offset = self.start_time or 0.0
+                t = start_offset + idx / self.fps
                 seg = self.segments.settings_for_frame(idx, self.fps,
                                                        start_offset=start_offset)
                 if seg is not None:
@@ -274,6 +303,9 @@ class ConversionPipeline:
                     f_max_tiles = seg.max_tiles
                     f_dither = seg.dither_method
                     f_engine = seg.engine
+                    f_grayscale = seg.grayscale
+                    seg_idx = self.segments.segment_index_for_time(t)
+                    f_shared_palette = shared_palettes.get(seg_idx)
                 else:
                     f_num_palettes = self.num_palettes
                     f_max_tiles = self.max_tiles
@@ -288,7 +320,9 @@ class ConversionPipeline:
             success, err = convert_frame(png_path, num_palettes=f_num_palettes,
                                          max_tiles=f_max_tiles,
                                          dither_method=f_dither,
-                                         engine=f_engine)
+                                         engine=f_engine,
+                                         grayscale=f_grayscale,
+                                         shared_palette=f_shared_palette)
             if not success:
                 return idx, None, err
 

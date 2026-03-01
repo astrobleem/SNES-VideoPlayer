@@ -237,6 +237,27 @@ class ConverterGUI:
         engine_combo.grid(row=3, column=1, sticky=tk.W, padx=5)
         engine_combo.bind('<<ComboboxSelected>>', lambda e: self._on_quality_changed())
 
+        self.grayscale_var = tk.BooleanVar(value=False)
+        grayscale_cb = ttk.Checkbutton(settings_frame, text="Grayscale",
+                                        variable=self.grayscale_var,
+                                        command=self._on_quality_changed)
+        grayscale_cb.grid(row=3, column=2, sticky=tk.W, padx=5)
+        Tooltip(grayscale_cb,
+                "Convert frames to grayscale before processing.\n"
+                "Useful for B&W source material to avoid\n"
+                "wasting palette entries on color noise.")
+
+        self.shared_palette_var = tk.BooleanVar(value=False)
+        shared_pal_cb = ttk.Checkbutton(settings_frame, text="Shared Palette",
+                                         variable=self.shared_palette_var,
+                                         command=self._on_quality_changed)
+        shared_pal_cb.grid(row=3, column=3, columnspan=2, sticky=tk.W, padx=5)
+        Tooltip(shared_pal_cb,
+                "Compute one palette from sampled frames and reuse\n"
+                "it for all frames in this segment. Reduces dither\n"
+                "'swimming' between frames. Only used during full\n"
+                "conversion (not single-frame preview).")
+
         # --- Preview panels ---
         preview_frame = ttk.LabelFrame(main_frame, text="Preview", padding=5)
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
@@ -525,6 +546,8 @@ class ConverterGUI:
             seg = self._segment_list.segments[self._selected_segment_idx]
             seg.dither_method = self._get_dither_method()
             seg.engine = self._get_engine()
+            seg.grayscale = self.grayscale_var.get()
+            seg.shared_palette = self.shared_palette_var.get()
             try:
                 seg.num_palettes = int(self.palettes_var.get())
             except (ValueError, tk.TclError):
@@ -899,6 +922,10 @@ class ConverterGUI:
                 'superfamiconv': 'SuperFamiconv',
             }
             self.engine_var.set(engine_map.get(seg.engine, 'Built-in'))
+
+            # Grayscale / Shared palette
+            self.grayscale_var.set(seg.grayscale)
+            self.shared_palette_var.set(seg.shared_palette)
         finally:
             self._updating_controls = False
 
@@ -957,6 +984,7 @@ class ConverterGUI:
                 max_tiles = seg.max_tiles
                 dither_method = seg.dither_method
                 engine = seg.engine
+                grayscale = seg.grayscale
             else:
                 return
         else:
@@ -967,6 +995,7 @@ class ConverterGUI:
                 return
             dither_method = self._get_dither_method()
             engine = self._get_engine()
+            grayscale = self.grayscale_var.get()
 
         if max_tiles < 1 or max_tiles > 384:
             return
@@ -979,7 +1008,8 @@ class ConverterGUI:
                     num_palettes=num_palettes,
                     max_tiles=max_tiles,
                     dither_method=dither_method,
-                    engine=engine)
+                    engine=engine,
+                    grayscale=grayscale)
                 pil_img = reconstruct_to_pil(tiles, tilemap, palette, 256, 160)
                 self.root.after(0, self._display_on_canvas,
                                 self.snes_canvas, pil_img, 'snes_photo')
