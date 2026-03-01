@@ -19,6 +19,18 @@ uv run videoplayer_converter.py
 cd converter
 uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --workers 8
 
+# Preserve aspect ratio for portrait/vertical video (black pillarbox bars)
+uv run videoplayer_converter.py --cli -i short.mp4 -o SNESVideoPlayer.msu --scale-mode fit
+
+# Crop to fill (no bars, center-crops overflow)
+uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --scale-mode crop
+
+# Override aspect ratio
+uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --scale-mode fit --aspect-ratio 4:3
+
+# Grayscale with shared palette
+uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --grayscale --shared-palette
+
 # With per-segment quality settings
 uv run videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu --segments-file segments.json
 ```
@@ -44,7 +56,7 @@ Requires WSL on Windows. Uses WLA-DX 9.5 assembler bundled in `rom/tools/`.
 Entry point: `videoplayer_converter.py` — dispatches to GUI (no args) or CLI (`--cli`).
 
 Pipeline phases orchestrated by `pipeline.py`:
-1. **frame_extract.py** — ffmpeg extracts 256x160 PNG frames at 24fps
+1. **frame_extract.py** — ffmpeg extracts 256x160 PNG frames at 24fps with configurable scale mode (stretch/fit/crop) and optional aspect ratio override
 2. **audio_extract.py** — ffmpeg extracts audio → 44100Hz stereo 16-bit LE PCM with MSU-1 header
 3. **tile_convert.py** — core algorithm (K-means clustering, sub-palette building, Floyd-Steinberg dithering, 4BPP encoding, greedy tile merging to ≤384 unique tiles). Runs in parallel via ThreadPoolExecutor with BLAS pinned to single-thread per worker.
 4. **msu_package.py** — writes binary `.msu` file (header, chapter pointers, frame data)
@@ -76,6 +88,18 @@ Important subsystems:
 - **Audio**: 44100Hz stereo 16-bit signed little-endian PCM
 - **Frame rate**: 24fps
 - **MSU-1 title**: exactly 21 characters, space-padded, must match between ROM and .msu file
+
+## Scale Mode & Aspect Ratio
+
+The converter supports three video scaling modes controlled by `scale_mode` (CLI: `--scale-mode`, GUI: Scale Mode combo):
+
+- **`stretch`** (default): `scale=W:H` — fills 256x160 exactly, may distort non-16:10 sources
+- **`fit`**: `scale=W:H:force_original_aspect_ratio=decrease,pad=W:H:...:color=black` — preserves aspect ratio, pads with black
+- **`crop`**: `scale=W:H:force_original_aspect_ratio=increase,crop=W:H` — preserves aspect ratio, center-crops overflow
+
+Optional `aspect_ratio` override (CLI: `--aspect-ratio`, e.g. `"16:9"`) pre-scales pixels to the desired AR before fit/crop using `scale=trunc(ih*ar_w/ar_h/2)*2:ih,setsar=1`. Ignored in stretch mode since it forces exact dimensions. GUI auto-switches from Stretch to Fit when an AR is entered.
+
+Implementation: `_build_scale_filter()` in `frame_extract.py` returns the filter list. Both `extract_frames()` and `extract_single_frame()` accept `scale_mode` and `aspect_ratio` params. These are global pipeline settings (not per-segment) threaded through `ConversionPipeline` and `run_pipeline()`.
 
 ## Per-Segment Quality
 
