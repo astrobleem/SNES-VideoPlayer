@@ -36,7 +36,7 @@ The ROM runs in Mode 1 (4BPP) at 256x160, letterboxed with 32px black borders on
 ```
 Input video
     │
-    ├─→ ffmpeg extracts 256x160 PNG frames at 24fps
+    ├─→ ffmpeg extracts 256x160 PNG frames at 24fps (stretch/fit/crop)
     │
     ├─→ ffmpeg extracts audio → 44100Hz stereo 16-bit PCM
     │
@@ -82,7 +82,17 @@ pip install numpy Pillow yt-dlp
 python videoplayer_converter.py
 ```
 
-Browse for a local video or paste a YouTube URL and click Download. Use the scrubber to preview any frame, adjust quality settings (dithering, max tiles, palettes), then click Convert.
+Browse for a local video or paste a YouTube URL and click Download. Use the scrubber to preview any frame, adjust quality settings (dithering, max tiles, palettes, scale mode), then click Convert.
+
+#### Scale Mode
+
+Videos come in all aspect ratios — widescreen, portrait (YouTube Shorts), 4:3, etc. The **Scale Mode** setting controls how the video is fitted to the 256x160 SNES display:
+
+- **Stretch** (default): Fills 256x160 exactly. May distort if the source aspect ratio doesn't match.
+- **Fit**: Scales the video to fit inside 256x160 while preserving aspect ratio. Black bars are added to fill the remaining space (pillarbox for tall videos, letterbox for ultra-wide).
+- **Crop**: Scales to cover 256x160 while preserving aspect ratio, cropping the overflow (center crop).
+
+The **Aspect Ratio** field lets you override the source's detected aspect ratio (e.g. `16:9`, `4:3`). Leave it empty to auto-detect. Entering a value auto-switches to Fit mode if Stretch is selected.
 
 #### Per-Segment Quality
 
@@ -116,6 +126,22 @@ python videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu \
 # Per-segment quality via JSON file
 python videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu \
     --segments-file segments.json
+
+# Preserve aspect ratio (fit with black bars)
+python videoplayer_converter.py --cli -i portrait_video.mp4 -o SNESVideoPlayer.msu \
+    --scale-mode fit
+
+# Crop to fill (no black bars, center crop)
+python videoplayer_converter.py --cli -i widescreen.mp4 -o SNESVideoPlayer.msu \
+    --scale-mode crop
+
+# Override aspect ratio
+python videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu \
+    --scale-mode fit --aspect-ratio 4:3
+
+# Grayscale with shared palette (reduces dither swimming)
+python videoplayer_converter.py --cli -i video.mp4 -o SNESVideoPlayer.msu \
+    --grayscale --shared-palette
 ```
 
 #### Segments File Format
@@ -185,6 +211,10 @@ python tools/fxpak_push.py --no-boot                # upload only
 | `--num-palettes` | 2 | Sub-palettes per frame: `1` or `2` |
 | `--engine` | `builtin` | Tile conversion engine: `builtin`, `superfamiconv` |
 | `--segments-file` | — | JSON file with per-segment quality settings |
+| `--scale-mode` | `stretch` | Video scaling: `stretch`, `fit` (pad with black), `crop` (center crop) |
+| `--aspect-ratio` | auto | Override source aspect ratio (e.g. `16:9`, `4:3`, `9:16`) |
+| `--grayscale` | off | Convert frames to grayscale before processing |
+| `--shared-palette` | off | Compute one shared palette across the segment to reduce dither swimming |
 
 ## Technical Details
 
