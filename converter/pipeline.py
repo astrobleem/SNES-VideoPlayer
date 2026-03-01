@@ -21,7 +21,8 @@ import logging
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from frame_extract import extract_frames, get_extracted_frames, get_video_info, find_ffmpeg
+from frame_extract import (extract_frames, get_extracted_frames, get_video_info,
+                           find_ffmpeg, SCALE_STRETCH)
 from audio_extract import extract_audio_from_video
 from tile_convert import (convert_frame, compute_shared_palette,
                           FRAME_WIDTH, FRAME_HEIGHT,
@@ -90,7 +91,7 @@ class ConversionPipeline:
                  num_palettes=MAX_PALETTES, max_tiles=MAX_TILES,
                  dither_method=DEFAULT_DITHER, engine=DEFAULT_ENGINE,
                  deinterlace=False, start_time=None, duration=None,
-                 segments=None):
+                 segments=None, scale_mode=SCALE_STRETCH, aspect_ratio=None):
         """Initialize the conversion pipeline.
 
         Args:
@@ -108,6 +109,8 @@ class ConversionPipeline:
             start_time: Start time in seconds (None = beginning)
             duration: Duration in seconds (None = full video)
             segments: SegmentList for per-segment quality settings (None = use global settings)
+            scale_mode: Video scaling mode ('stretch', 'fit', 'crop')
+            aspect_ratio: Optional aspect ratio override (e.g. '16:9')
         """
         self.video_path = video_path
         self.output_path = output_path
@@ -123,6 +126,8 @@ class ConversionPipeline:
         self.start_time = start_time
         self.duration = duration
         self.segments = segments
+        self.scale_mode = scale_mode
+        self.aspect_ratio = aspect_ratio
 
         self.progress = PipelineProgress()
         self.temp_dir = None
@@ -218,6 +223,8 @@ class ConversionPipeline:
             deinterlace=self.deinterlace,
             width=FRAME_WIDTH,
             height=FRAME_HEIGHT,
+            scale_mode=self.scale_mode,
+            aspect_ratio=self.aspect_ratio,
         )
 
         weight = self.PHASE_WEIGHTS['extract_frames']
@@ -447,6 +454,7 @@ def run_pipeline(video_path, output_path, workers=4, ffmpeg=None,
                  num_palettes=MAX_PALETTES, max_tiles=MAX_TILES,
                  dither_method=DEFAULT_DITHER, engine=DEFAULT_ENGINE,
                  segments=None,
+                 scale_mode=SCALE_STRETCH, aspect_ratio=None,
                  progress_callback=None, frame_callback=None,
                  complete_callback=None, error_callback=None):
     """Convenience function to run the full pipeline with callbacks.
@@ -466,6 +474,8 @@ def run_pipeline(video_path, output_path, workers=4, ffmpeg=None,
         dither_method: Dithering method ('none', 'floyd-steinberg', 'ordered')
         engine: Conversion engine ('builtin' or 'superfamiconv')
         segments: SegmentList for per-segment quality settings (None = use global settings)
+        scale_mode: Video scaling mode ('stretch', 'fit', 'crop')
+        aspect_ratio: Optional aspect ratio override (e.g. '16:9')
         progress_callback: callable(phase_progress, overall_progress, message)
         frame_callback: callable(frame_idx, total, tiles, tilemap, palette, source_path)
         complete_callback: callable(output_path)
@@ -483,6 +493,7 @@ def run_pipeline(video_path, output_path, workers=4, ffmpeg=None,
         deinterlace=deinterlace,
         start_time=start_time, duration=duration,
         segments=segments,
+        scale_mode=scale_mode, aspect_ratio=aspect_ratio,
     )
 
     if progress_callback:

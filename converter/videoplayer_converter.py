@@ -120,6 +120,10 @@ def run_cli(args):
     print(f"  Max tiles: {max_tiles}")
     print(f"  Palettes: {args.num_palettes}")
     print(f"  Engine: {args.engine}")
+    if args.scale_mode != 'stretch':
+        print(f"  Scale mode: {args.scale_mode}")
+    if args.aspect_ratio:
+        print(f"  Aspect ratio: {args.aspect_ratio}")
     if args.grayscale:
         print("  Grayscale: enabled")
     if args.shared_palette:
@@ -146,6 +150,8 @@ def run_cli(args):
         dither_method=args.dither,
         engine=args.engine,
         segments=segments,
+        scale_mode=args.scale_mode,
+        aspect_ratio=args.aspect_ratio,
         progress_callback=on_progress,
         complete_callback=on_complete,
         error_callback=on_error,
@@ -210,6 +216,14 @@ Examples:
     parser.add_argument('--segments-file', type=str, default=None,
                         help='JSON file with per-segment quality settings '
                              '(overrides --dither/--max-tiles/--num-palettes/--engine)')
+    parser.add_argument('--scale-mode', type=str, default='stretch',
+                        choices=['stretch', 'fit', 'crop'],
+                        help='Video scaling mode: stretch (fill, may distort), '
+                             'fit (preserve aspect ratio, pad with black), '
+                             'crop (preserve aspect ratio, crop overflow) '
+                             '(default: stretch)')
+    parser.add_argument('--aspect-ratio', type=str, default=None,
+                        help='Override source aspect ratio (e.g. "16:9", "4:3", "9:16")')
     parser.add_argument('--grayscale', action='store_true',
                         help='Convert frames to grayscale before processing')
     parser.add_argument('--shared-palette', action='store_true',

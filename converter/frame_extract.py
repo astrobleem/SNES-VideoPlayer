@@ -21,6 +21,49 @@ TARGET_FPS = "24000/1001"
 TARGET_FPS_FLOAT = 24000.0 / 1001.0  # ~23.976
 
 
+SCALE_STRETCH = 'stretch'
+SCALE_FIT = 'fit'
+SCALE_CROP = 'crop'
+SCALE_MODES = [SCALE_STRETCH, SCALE_FIT, SCALE_CROP]
+
+
+def _build_scale_filter(width, height, scale_mode, aspect_ratio=None):
+    """Build ffmpeg filter string for scaling with the given mode.
+
+    Args:
+        width: Target width in pixels
+        height: Target height in pixels
+        scale_mode: 'stretch', 'fit', or 'crop'
+        aspect_ratio: Optional aspect ratio override (e.g. '16:9', '4:3')
+
+    Returns:
+        List of filter strings to join with ','
+    """
+    filters = []
+
+    if aspect_ratio and scale_mode != SCALE_STRETCH:
+        # Reshape pixels to match the desired aspect ratio before fit/crop.
+        # scale expressions: ih*ar_w/ar_h gives the width that produces
+        # the desired AR at the current height. setsar=1 ensures the
+        # subsequent scale sees square pixels.
+        ar = aspect_ratio.replace('/', ':')
+        ar_w, ar_h = ar.split(':')
+        filters.append(f'scale=trunc(ih*{ar_w}/{ar_h}/2)*2:ih')
+        filters.append('setsar=1')
+
+    if scale_mode == SCALE_FIT:
+        filters.append(f'scale={width}:{height}:force_original_aspect_ratio=decrease')
+        filters.append(f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black')
+    elif scale_mode == SCALE_CROP:
+        filters.append(f'scale={width}:{height}:force_original_aspect_ratio=increase')
+        filters.append(f'crop={width}:{height}')
+    else:
+        # stretch (default)
+        filters.append(f'scale={width}:{height}')
+
+    return filters
+
+
 def find_ffmpeg():
     """Find ffmpeg executable. Checks PATH first, then common locations."""
     # Check PATH
@@ -108,6 +151,7 @@ def get_video_info(video_path, ffmpeg='ffmpeg'):
 def extract_frames(video_path, output_dir, ffmpeg='ffmpeg',
                    start_time=None, duration=None, deinterlace=False,
                    width=FRAME_WIDTH, height=FRAME_HEIGHT,
+                   scale_mode=SCALE_STRETCH, aspect_ratio=None,
                    progress_callback=None):
     """Extract video frames as 256x160 PNG images.
 
@@ -120,6 +164,8 @@ def extract_frames(video_path, output_dir, ffmpeg='ffmpeg',
         deinterlace: Apply yadif deinterlace filter
         width: Output frame width (default 256)
         height: Output frame height (default 160)
+        scale_mode: 'stretch', 'fit', or 'crop'
+        aspect_ratio: Optional aspect ratio override (e.g. '16:9')
         progress_callback: Optional callable(current_frame, total_estimated)
 
     Returns:
@@ -143,7 +189,7 @@ def extract_frames(video_path, output_dir, ffmpeg='ffmpeg',
         filters.append(f'trim=duration={duration:.6f}')
         filters.append('setpts=PTS-STARTPTS')
 
-    filters.append(f'scale={width}:{height}')
+    filters.extend(_build_scale_filter(width, height, scale_mode, aspect_ratio))
 
     filter_str = ','.join(filters)
 
@@ -174,7 +220,8 @@ def extract_frames(video_path, output_dir, ffmpeg='ffmpeg',
 
 
 def extract_single_frame(video_path, output_path, ffmpeg='ffmpeg',
-                         seek_time=0, width=FRAME_WIDTH, height=FRAME_HEIGHT):
+                         seek_time=0, width=FRAME_WIDTH, height=FRAME_HEIGHT,
+                         scale_mode=SCALE_STRETCH, aspect_ratio=None):
     """Extract a single frame from a video at a given time offset.
 
     Args:
@@ -184,15 +231,18 @@ def extract_single_frame(video_path, output_path, ffmpeg='ffmpeg',
         seek_time: Time in seconds to seek to
         width: Output width in pixels
         height: Output height in pixels
+        scale_mode: 'stretch', 'fit', or 'crop'
+        aspect_ratio: Optional aspect ratio override (e.g. '16:9')
 
     Returns:
         True if frame was successfully extracted
     """
+    scale_filters = _build_scale_filter(width, height, scale_mode, aspect_ratio)
     cmd = [
         ffmpeg, '-y',
         '-ss', f'{seek_time:.3f}',
         '-i', video_path,
-        '-vf', f'scale={width}:{height}',
+        '-vf', ','.join(scale_filters),
         '-frames:v', '1',
         output_path
     ]

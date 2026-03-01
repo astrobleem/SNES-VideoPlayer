@@ -26,7 +26,8 @@ if CONVERTER_DIR not in sys.path:
 from pipeline import ConversionPipeline, PipelineProgress
 from msu_package import MSU_TITLE
 from preview import reconstruct_to_pil
-from frame_extract import find_ffmpeg, get_video_info, extract_single_frame
+from frame_extract import (find_ffmpeg, get_video_info, extract_single_frame,
+                           SCALE_STRETCH, SCALE_FIT, SCALE_CROP)
 from tile_convert import (DITHER_NONE, DITHER_FLOYD_STEINBERG, DITHER_ORDERED,
                           DEFAULT_DITHER, MAX_TILES, MAX_PALETTES,
                           ENGINE_BUILTIN, ENGINE_SUPERFAMICONV, DEFAULT_ENGINE)
@@ -165,6 +166,31 @@ class ConverterGUI:
         self.deinterlace_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(settings_frame, text="Deinterlace",
                         variable=self.deinterlace_var).grid(row=0, column=2, padx=15)
+
+        scale_label = ttk.Label(settings_frame, text="Scale Mode:")
+        scale_label.grid(row=0, column=3, sticky=tk.W, padx=5)
+        Tooltip(scale_label,
+                "How the video is fitted to 256x160.\n"
+                "Stretch: fill exactly, may distort (default).\n"
+                "Fit: preserve aspect ratio, pad with black.\n"
+                "Crop: preserve aspect ratio, crop overflow.")
+        self.scale_mode_var = tk.StringVar(value="Stretch")
+        scale_combo = ttk.Combobox(settings_frame, textvariable=self.scale_mode_var,
+                                   values=["Stretch", "Fit", "Crop"],
+                                   state='readonly', width=8)
+        scale_combo.grid(row=0, column=4, sticky=tk.W, padx=5)
+        scale_combo.bind('<<ComboboxSelected>>', lambda e: self._on_scale_changed())
+
+        ar_label = ttk.Label(settings_frame, text="Aspect Ratio:")
+        ar_label.grid(row=0, column=5, sticky=tk.W, padx=5)
+        Tooltip(ar_label,
+                "Override source aspect ratio (e.g. 16:9, 4:3).\n"
+                "Leave empty to auto-detect from source.")
+        self.aspect_ratio_var = tk.StringVar(value="")
+        ar_entry = ttk.Entry(settings_frame, textvariable=self.aspect_ratio_var, width=7)
+        ar_entry.grid(row=0, column=6, sticky=tk.W, padx=5)
+        ar_entry.bind('<Return>', lambda e: self._on_scale_changed())
+        ar_entry.bind('<FocusOut>', lambda e: self._on_scale_changed())
 
         # Row 2: Time range
         ttk.Label(settings_frame, text="Start (sec):").grid(row=1, column=0, sticky=tk.W, padx=5)
@@ -536,6 +562,31 @@ class ConverterGUI:
         }
         return mapping.get(self.engine_var.get(), DEFAULT_ENGINE)
 
+    def _get_scale_mode(self):
+        """Map GUI scale mode display string to constant."""
+        mapping = {
+            "Stretch": SCALE_STRETCH,
+            "Fit": SCALE_FIT,
+            "Crop": SCALE_CROP,
+        }
+        return mapping.get(self.scale_mode_var.get(), SCALE_STRETCH)
+
+    def _get_aspect_ratio(self):
+        """Return aspect ratio string or None if empty."""
+        val = self.aspect_ratio_var.get().strip()
+        return val if val else None
+
+    def _on_scale_changed(self):
+        """Re-extract and preview the frame when scale mode or aspect ratio changes."""
+        # Auto-switch to Fit if user sets an aspect ratio while on Stretch
+        if self.aspect_ratio_var.get().strip() and self.scale_mode_var.get() == "Stretch":
+            self.scale_mode_var.set("Fit")
+
+        if self._video_path and not self.is_converting:
+            seek_time = self.scrub_var.get()
+            ffmpeg = find_ffmpeg()
+            self._show_preview_frame(self._video_path, ffmpeg, seek_time)
+
     def _on_quality_changed(self):
         """Re-convert the cached preview frame when quality settings change."""
         if self._updating_controls:
@@ -663,6 +714,8 @@ class ConverterGUI:
         ffmpeg = find_ffmpeg()
         fps = self.fps_var.get()
         segment_list = self._segment_list  # capture for thread
+        scale_mode = self._get_scale_mode()
+        aspect_ratio = self._get_aspect_ratio()
 
         cancel = threading.Event()
         self._clip_cancel = cancel
@@ -685,7 +738,8 @@ class ConverterGUI:
                 self.root.after(0, self.status_label.configure,
                                 {'text': 'Extracting clip frames...'})
                 extract_frames(video_path, tmp, ffmpeg=ffmpeg,
-                               start_time=seek, duration=clip_dur)
+                               start_time=seek, duration=clip_dur,
+                               scale_mode=scale_mode, aspect_ratio=aspect_ratio)
                 if cancel.is_set():
                     return
 
@@ -1024,7 +1078,9 @@ class ConverterGUI:
         preview_path = os.path.join(tempfile.gettempdir(), 'snes_vp_preview.png')
         try:
             if extract_single_frame(video_path, preview_path, ffmpeg,
-                                    seek_time=seek_time):
+                                    seek_time=seek_time,
+                                    scale_mode=self._get_scale_mode(),
+                                    aspect_ratio=self._get_aspect_ratio()):
                 from PIL import Image
                 img = Image.open(preview_path)
                 self._display_on_canvas(self.src_canvas, img, 'src_photo')
@@ -1092,6 +1148,8 @@ class ConverterGUI:
             start_time=start_time,
             duration=duration,
             segments=self._segment_list,
+            scale_mode=self._get_scale_mode(),
+            aspect_ratio=self._get_aspect_ratio(),
         )
 
         # Set up progress callbacks (thread-safe via root.after)
