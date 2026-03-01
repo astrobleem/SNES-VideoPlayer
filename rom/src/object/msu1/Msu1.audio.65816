@@ -3,7 +3,7 @@
 * 
 * useful if only msu1 audio required (doesnt allocate any memory)
 */
-.include "src/object/msu1/msu1.audio.h"
+.include "src/object/msu1/Msu1.audio.h"
 .section "msu1.audio"
 
   METHOD init
