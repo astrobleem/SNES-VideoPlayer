@@ -133,7 +133,7 @@ class ConverterGUI:
         url_label = ttk.Label(file_frame, text="Video URL:")
         url_label.grid(row=1, column=0, sticky=tk.W, padx=5)
         Tooltip(url_label, "Paste a YouTube or video URL to download.\n"
-                           "Requires pytube2: pip install pytube2")
+                           "Requires yt-dlp: pip install yt-dlp")
         self.url_var = tk.StringVar()
         url_entry = ttk.Entry(file_frame, textvariable=self.url_var, width=60)
         url_entry.grid(row=1, column=1, sticky=tk.EW, padx=5)

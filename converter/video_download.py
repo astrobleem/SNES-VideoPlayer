@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-video_download.py - Download videos from URLs using pytube2
+video_download.py - Download videos from URLs using yt-dlp
 
 Provides a helper to download a video from a YouTube (or compatible) URL
 to a local file for use in the SNES-VideoPlayer converter pipeline.
 
-Requires: pip install pytube2
+Requires: pip install yt-dlp
 """
 
 import os
@@ -22,7 +22,7 @@ def is_url(text):
 
 
 def download_video(url, output_dir=None, on_progress=None):
-    """Download a video from a URL using pytube2.
+    """Download a video from a URL using yt-dlp.
 
     Args:
         url: Video URL (YouTube, etc.)
@@ -33,60 +33,54 @@ def download_video(url, output_dir=None, on_progress=None):
         Path to the downloaded video file.
 
     Raises:
-        ImportError: If pytube2 is not installed.
+        ImportError: If yt-dlp is not installed.
         Exception: On download failure.
     """
     try:
-        from pytube import YouTube
+        import yt_dlp
     except ImportError:
         raise ImportError(
-            "pytube2 is required for URL downloads.\n"
-            "Install it with: pip install pytube2"
+            "yt-dlp is required for URL downloads.\n"
+            "Install it with: pip install yt-dlp"
         )
 
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix='snes_vp_dl_')
 
-    def _pytube_progress(stream, chunk, bytes_remaining):
-        if on_progress and stream.filesize:
-            downloaded = stream.filesize - bytes_remaining
-            pct = downloaded / stream.filesize * 100
-            on_progress(downloaded, stream.filesize, pct)
+    # Track the final filename via a hook
+    downloaded_path = {}
+
+    def _progress_hook(d):
+        if d['status'] == 'downloading' and on_progress:
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            downloaded = d.get('downloaded_bytes', 0)
+            if total > 0:
+                pct = downloaded / total * 100
+                on_progress(downloaded, total, pct)
+        elif d['status'] == 'finished':
+            downloaded_path['path'] = d.get('filename', '')
 
     logger.info("Connecting to: %s", url)
-    yt = YouTube(url, on_progress_callback=_pytube_progress)
 
-    title = yt.title
-    logger.info("Video title: %s", title)
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
+        'progress_hooks': [_progress_hook],
+        'quiet': True,
+        'no_warnings': True,
+    }
 
-    # Prefer progressive MP4 (has audio+video in one file) at highest resolution
-    stream = (yt.streams
-              .filter(progressive=True, file_extension='mp4')
-              .order_by('resolution')
-              .desc()
-              .first())
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        title = info.get('title', 'unknown')
+        logger.info("Video title: %s", title)
 
-    if stream is None:
-        # Fall back to any MP4 stream
-        stream = (yt.streams
-                  .filter(file_extension='mp4')
-                  .order_by('resolution')
-                  .desc()
-                  .first())
+    # Determine the output path
+    path = downloaded_path.get('path', '')
+    if not path or not os.path.isfile(path):
+        # Fallback: find the file yt-dlp wrote
+        path = ydl.prepare_filename(info)
 
-    if stream is None:
-        # Last resort: any available stream
-        stream = yt.streams.first()
-
-    if stream is None:
-        raise RuntimeError("No downloadable streams found for this URL")
-
-    logger.info("Downloading: %s (%s, %s)",
-                stream.resolution or 'unknown res',
-                stream.mime_type,
-                _fmt_size(stream.filesize) if stream.filesize else '? MB')
-
-    path = stream.download(output_path=output_dir)
     logger.info("Downloaded: %s", path)
     return path
 

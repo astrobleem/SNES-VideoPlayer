@@ -159,7 +159,7 @@ Examples:
     parser.add_argument('-i', '--input', type=str,
                         help='Input video file path')
     parser.add_argument('--url', type=str, default=None,
-                        help='Download video from URL (requires pytube2)')
+                        help='Download video from URL (requires yt-dlp)')
     parser.add_argument('-o', '--output', type=str,
                         help='Output .msu file path')
     parser.add_argument('-w', '--workers', type=int, default=4,
