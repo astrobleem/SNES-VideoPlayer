@@ -216,12 +216,18 @@ Examples:
     parser.add_argument('--segments-file', type=str, default=None,
                         help='JSON file with per-segment quality settings '
                              '(overrides --dither/--max-tiles/--num-palettes/--engine)')
+    # Scale mode controls how source video is fitted to 256x160.
+    # Critical for non-standard aspect ratios (portrait, ultra-wide, 4:3).
+    # Default is 'stretch' for backward compatibility.
     parser.add_argument('--scale-mode', type=str, default='stretch',
                         choices=['stretch', 'fit', 'crop'],
                         help='Video scaling mode: stretch (fill, may distort), '
                              'fit (preserve aspect ratio, pad with black), '
                              'crop (preserve aspect ratio, crop overflow) '
                              '(default: stretch)')
+    # Aspect ratio override: tells ffmpeg to treat the source as this AR
+    # before applying fit/crop. Only meaningful with --scale-mode fit or crop.
+    # Ignored silently with stretch mode (which forces exact dimensions).
     parser.add_argument('--aspect-ratio', type=str, default=None,
                         help='Override source aspect ratio (e.g. "16:9", "4:3", "9:16")')
     parser.add_argument('--grayscale', action='store_true',

@@ -5,7 +5,9 @@ frame_extract.py - ffmpeg frame extraction wrapper for SNES-VideoPlayer
 Extracts video frames from any video file as 256x160 PNG images at
 24000/1001 fps (~23.976 fps) suitable for MSU-1 playback on SNES.
 
-Supports optional deinterlacing, custom time ranges, and progress callbacks.
+Supports optional deinterlacing, custom time ranges, progress callbacks,
+and three video scaling modes (stretch/fit/crop) with optional aspect
+ratio override for handling non-standard source aspect ratios.
 """
 
 import os
@@ -21,44 +23,80 @@ TARGET_FPS = "24000/1001"
 TARGET_FPS_FLOAT = 24000.0 / 1001.0  # ~23.976
 
 
-SCALE_STRETCH = 'stretch'
-SCALE_FIT = 'fit'
-SCALE_CROP = 'crop'
+# --- Scale mode constants ---
+# These control how source video is fitted to the target resolution (e.g. 256x160).
+# Important for non-standard aspect ratios like portrait/vertical video (YouTube Shorts).
+SCALE_STRETCH = 'stretch'  # Force-fill target dimensions; distorts if AR doesn't match
+SCALE_FIT = 'fit'          # Fit inside target, preserving AR; pad remainder with black
+SCALE_CROP = 'crop'        # Cover target, preserving AR; center-crop the overflow
 SCALE_MODES = [SCALE_STRETCH, SCALE_FIT, SCALE_CROP]
 
 
 def _build_scale_filter(width, height, scale_mode, aspect_ratio=None):
-    """Build ffmpeg filter string for scaling with the given mode.
+    """Build the ffmpeg video filter chain for scaling to the target resolution.
+
+    Returns a list of ffmpeg filter strings (to be comma-joined into a -vf chain).
+    The caller appends these after any deinterlace/fps/trim filters.
+
+    Scale modes produce different ffmpeg filter chains:
+      stretch: scale=W:H
+        Forces exact dimensions. Simple but distorts non-matching aspect ratios.
+
+      fit:    scale=W:H:force_original_aspect_ratio=decrease, pad=W:H:centered:black
+        Scales the largest dimension to fit, then pads the shorter dimension
+        with black bars (pillarbox for tall video, letterbox for ultra-wide).
+
+      crop:   scale=W:H:force_original_aspect_ratio=increase, crop=W:H
+        Scales the smallest dimension to fill, then center-crops the overflow.
+        No black bars, but some content is lost at the edges.
+
+    Aspect ratio override (e.g. '16:9'):
+      Ignored for stretch mode (exact dimensions override any AR).
+      For fit/crop, we pre-scale the source pixels to match the desired AR
+      before applying the fit/crop logic. This is necessary because ffmpeg's
+      force_original_aspect_ratio works on pixel dimensions, not metadata —
+      setdar alone has no effect. Instead we reshape via scale + setsar=1.
 
     Args:
-        width: Target width in pixels
-        height: Target height in pixels
-        scale_mode: 'stretch', 'fit', or 'crop'
-        aspect_ratio: Optional aspect ratio override (e.g. '16:9', '4:3')
+        width: Target width in pixels (e.g. 256 for SNES)
+        height: Target height in pixels (e.g. 160 for SNES)
+        scale_mode: One of SCALE_STRETCH, SCALE_FIT, SCALE_CROP
+        aspect_ratio: Optional AR override string like '16:9' or '4:3'.
+                      Accepts colon or slash separators ('16:9' or '16/9').
 
     Returns:
-        List of filter strings to join with ','
+        List of ffmpeg filter strings to join with ','
     """
     filters = []
 
+    # --- Aspect ratio override (pre-scale) ---
+    # Only meaningful for fit/crop — stretch forces exact dims regardless of AR.
+    # We reshape the source pixels so their width/height ratio matches the
+    # desired AR, then set SAR=1 (square pixels) so the subsequent
+    # force_original_aspect_ratio scale sees the correct proportions.
+    # trunc(.../2)*2 ensures even dimensions (required by many ffmpeg codecs).
     if aspect_ratio and scale_mode != SCALE_STRETCH:
-        # Reshape pixels to match the desired aspect ratio before fit/crop.
-        # scale expressions: ih*ar_w/ar_h gives the width that produces
-        # the desired AR at the current height. setsar=1 ensures the
-        # subsequent scale sees square pixels.
         ar = aspect_ratio.replace('/', ':')
         ar_w, ar_h = ar.split(':')
         filters.append(f'scale=trunc(ih*{ar_w}/{ar_h}/2)*2:ih')
         filters.append('setsar=1')
 
+    # --- Main scale filter ---
     if scale_mode == SCALE_FIT:
+        # force_original_aspect_ratio=decrease: scale to fit INSIDE WxH
+        # (one dimension matches, the other is smaller)
         filters.append(f'scale={width}:{height}:force_original_aspect_ratio=decrease')
+        # pad: center the smaller image on a WxH black canvas
+        # (ow-iw)/2 and (oh-ih)/2 compute the centering offsets
         filters.append(f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black')
     elif scale_mode == SCALE_CROP:
+        # force_original_aspect_ratio=increase: scale to COVER WxH
+        # (one dimension matches, the other overflows)
         filters.append(f'scale={width}:{height}:force_original_aspect_ratio=increase')
+        # crop: center-crop to exact WxH, discarding overflow
         filters.append(f'crop={width}:{height}')
     else:
-        # stretch (default)
+        # stretch (default): force exact dimensions, ignoring source AR
         filters.append(f'scale={width}:{height}')
 
     return filters
@@ -189,6 +227,7 @@ def extract_frames(video_path, output_dir, ffmpeg='ffmpeg',
         filters.append(f'trim=duration={duration:.6f}')
         filters.append('setpts=PTS-STARTPTS')
 
+    # Append scale/fit/crop filters (replaces the old bare 'scale=W:H')
     filters.extend(_build_scale_filter(width, height, scale_mode, aspect_ratio))
 
     filter_str = ','.join(filters)

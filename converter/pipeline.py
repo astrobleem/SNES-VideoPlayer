@@ -126,6 +126,9 @@ class ConversionPipeline:
         self.start_time = start_time
         self.duration = duration
         self.segments = segments
+        # Scale mode and aspect ratio are global settings that affect how
+        # ffmpeg extracts frames — not per-segment because AR is a property
+        # of the source video. Passed through to extract_frames() in phase 1.
         self.scale_mode = scale_mode
         self.aspect_ratio = aspect_ratio
 

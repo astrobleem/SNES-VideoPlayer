@@ -167,6 +167,11 @@ class ConverterGUI:
         ttk.Checkbutton(settings_frame, text="Deinterlace",
                         variable=self.deinterlace_var).grid(row=0, column=2, padx=15)
 
+        # Scale mode: controls how source video is fitted to 256x160.
+        # This is a global pipeline setting (not per-segment) because aspect
+        # ratio is a property of the source video, not a quality preference.
+        # Changing it triggers a full frame re-extract (not just re-conversion)
+        # since the pixel data itself changes.
         scale_label = ttk.Label(settings_frame, text="Scale Mode:")
         scale_label.grid(row=0, column=3, sticky=tk.W, padx=5)
         Tooltip(scale_label,
@@ -181,6 +186,12 @@ class ConverterGUI:
         scale_combo.grid(row=0, column=4, sticky=tk.W, padx=5)
         scale_combo.bind('<<ComboboxSelected>>', lambda e: self._on_scale_changed())
 
+        # Aspect ratio override: tells ffmpeg to treat the source as this AR
+        # before applying fit/crop. Useful when source metadata is wrong or
+        # when you want to force a specific framing (e.g. treating a 4:3
+        # capture as 16:9). Empty = auto-detect from source dimensions.
+        # Uses text entry (not combo) since AR values are freeform (16:9, 4:3, etc.)
+        # Bound to Return and FocusOut since there's no ComboboxSelected event.
         ar_label = ttk.Label(settings_frame, text="Aspect Ratio:")
         ar_label.grid(row=0, column=5, sticky=tk.W, padx=5)
         Tooltip(ar_label,
@@ -563,7 +574,11 @@ class ConverterGUI:
         return mapping.get(self.engine_var.get(), DEFAULT_ENGINE)
 
     def _get_scale_mode(self):
-        """Map GUI scale mode display string to constant."""
+        """Map GUI scale mode display string to frame_extract constant.
+
+        Returns one of SCALE_STRETCH, SCALE_FIT, SCALE_CROP for use in
+        extract_frames() and extract_single_frame().
+        """
         mapping = {
             "Stretch": SCALE_STRETCH,
             "Fit": SCALE_FIT,
@@ -572,16 +587,29 @@ class ConverterGUI:
         return mapping.get(self.scale_mode_var.get(), SCALE_STRETCH)
 
     def _get_aspect_ratio(self):
-        """Return aspect ratio string or None if empty."""
+        """Return aspect ratio override string (e.g. '16:9') or None if empty.
+
+        None means auto-detect from source — ffmpeg uses the video's native
+        dimensions to determine aspect ratio.
+        """
         val = self.aspect_ratio_var.get().strip()
         return val if val else None
 
     def _on_scale_changed(self):
-        """Re-extract and preview the frame when scale mode or aspect ratio changes."""
-        # Auto-switch to Fit if user sets an aspect ratio while on Stretch
+        """Handle scale mode or aspect ratio changes.
+
+        Unlike _on_quality_changed() (which only re-converts the cached preview
+        PNG with new tile/dither settings), this must re-extract the frame from
+        the source video because scale mode changes the actual pixel content
+        (different cropping, padding, or stretching).
+        """
+        # Auto-switch to Fit when user enters an aspect ratio while on Stretch.
+        # Stretch mode ignores AR override (it forces exact WxH regardless),
+        # so keeping Stretch would make the AR entry appear broken.
         if self.aspect_ratio_var.get().strip() and self.scale_mode_var.get() == "Stretch":
             self.scale_mode_var.set("Fit")
 
+        # Re-extract the preview frame with the new scale/AR settings
         if self._video_path and not self.is_converting:
             seek_time = self.scrub_var.get()
             ffmpeg = find_ffmpeg()
@@ -714,6 +742,8 @@ class ConverterGUI:
         ffmpeg = find_ffmpeg()
         fps = self.fps_var.get()
         segment_list = self._segment_list  # capture for thread
+        # Capture scale settings for the render thread — these are global
+        # pipeline settings that affect how ffmpeg extracts frames
         scale_mode = self._get_scale_mode()
         aspect_ratio = self._get_aspect_ratio()
 
@@ -1148,6 +1178,8 @@ class ConverterGUI:
             start_time=start_time,
             duration=duration,
             segments=self._segment_list,
+            # Scale mode and aspect ratio are global pipeline settings
+            # (not per-segment) — they affect ffmpeg frame extraction
             scale_mode=self._get_scale_mode(),
             aspect_ratio=self._get_aspect_ratio(),
         )
