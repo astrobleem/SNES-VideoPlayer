@@ -10,7 +10,7 @@ Takes a standard video file (MP4, MKV, AVI, etc.) and produces a complete ROM pa
 
 The system has two parts:
 
-1. **A pre-built SNES ROM** (`SNESVideoPlayer.sfc`) — a minimal 65816 engine that boots to "PRESS START", then streams MSU-1 video frames to the screen with audio.
+1. **A pre-built SNES ROM** (`SNESVideoPlayer.sfc`) — a 65816 engine with SPC700 audio that boots to a title screen, then streams MSU-1 video frames to the screen with synchronized audio.
 
 2. **A Python converter tool** — takes your video file and produces the `.msu` (video data) and `.pcm` (audio data) files the ROM needs.
 
@@ -19,12 +19,14 @@ The ROM is already compiled and ships in `prebuilt/`. You never need an assemble
 ### What the ROM does
 
 ```
-Power on → Initialize hardware → Display "PRESS START"
+Power on → Initialize SPC700 audio engine → Upload samples
+    → Display "PRESS START" with controls → Play technique sound
     → Wait for START button
     → Fade to black → Start MSU-1 video (chapter 0)
     → Stream tiles/palettes/tilemaps from .msu file at 24fps
     → Play synchronized PCM audio
-    → Video ends → Fade to black → Loop back to "PRESS START"
+    → START: pause/resume video and audio
+    → Video ends → Fade to black → Auto-loop video
 ```
 
 The ROM runs in Mode 1 (4BPP) at 256x160, letterboxed with 32px black borders on the 224-line SNES display. Each frame uses up to 384 tiles and 2 sub-palettes (32 colors) with Floyd-Steinberg dithering.
@@ -137,6 +139,23 @@ All three files must share the same base name and live in the same directory. Th
 
 Load `SNESVideoPlayer.sfc` in your emulator or copy all files to your SD2SNES / FXPAK Pro SD card.
 
+### FXPAK Push Tool
+
+If you have an FXPAK Pro connected via USB with QUsb2Snes running, you can push and boot the ROM directly:
+
+```bash
+python tools/fxpak_push.py                        # push prebuilt ROM, boot it
+python tools/fxpak_push.py --file path/to/rom.sfc  # push a specific ROM
+python tools/fxpak_push.py --no-boot                # upload only
+```
+
+### Controller Input
+
+| Button | Action |
+|--------|--------|
+| START | Begin video playback (title screen) |
+| START | Pause / resume (during video) |
+
 ## CLI Options
 
 | Flag | Default | Description |
@@ -192,8 +211,9 @@ The ROM is a stripped-down version of a larger MSU-1 game engine. Key components
 | `oop.65816` | Custom OOP system with 48 concurrent object slots |
 | `script.65816` | Coroutine-style script system (SavePC/DIE) |
 | `msu1.65816` | MSU-1 video streaming — seeks, reads frames, DMA uploads |
+| `spcinterface.65816` | SPC700 audio engine — IPL upload, sample packs, sound effects |
 | `brightness.65816` | Screen fade controller (singleton) |
-| `Background.textlayer.8x8` | 8x8 font text layer for "PRESS START" |
+| `Background.textlayer.8x8` | 8x8 font text layer for title screen |
 | `Background.framebuffer` | Double-buffered BG layer for video frames |
 | `videoMask.65816` | HDMA-driven letterbox masking (32px borders) |
 
@@ -201,33 +221,33 @@ The videoplayer script (`videoplayer.script`) orchestrates the flow using the en
 
 ```asm
 SCRIPT videoplayer
-  ; Create brightness controller, set screen to black
-  NEW Brightness.CLS.PTR objBrightness
-  CALL Brightness.set.MTD objBrightness
+  ; Initialize SPC700 audio engine, upload sample pack
+  NEW Spc.CLS.PTR vpSpc
+  CALL Spc.SpcIssueSamplePackUpload.MTD vpSpc
 
-  ; Show "PRESS START" on text layer, fade in
+  ; Show "PRESS START" with controls, play technique sound
   NEW Background.textlayer.8x8.CLS.PTR vpTextlayer
   CALL Background.textlayer.8x8.print.MTD vpTextlayer
-  CALL Brightness.fadeTo.MTD objBrightness
+  CALL Spc.SpcPlaySoundEffect.MTD vpSpc
 
-  ; Wait for START button (polls each frame via SavePC)
-  jsr SavePC
-  jsr core.input.get.trigger
-  and.w #JOY_BUTTON_START
-  bne +      ; pressed → continue
-    rts      ; not pressed → wait another frame
-+
-
-  ; Fade out, create MSU-1, play chapter 0, fade in
+  ; Wait for START → fade out → start MSU-1 video
   NEW Msu1.CLS.PTR vpMsu1
   CALL Msu1.playVideo.MTD vpMsu1
 
-  ; Wait for video to finish, then loop
+  ; Video loop: check START for pause/unpause, check isDone
+_videoLoop:
   jsr SavePC
+  ; ... toggle pause on START ...
   CALL Msu1.isDone.MTD vpMsu1
-  ...
-  NEW Script.CLS.PTR oopCreateNoPtr videoplayer
-  DIE
+  bcs _videoDone
+  rts
+
+_videoDone:
+  ; Fade out, kill MSU-1, restart video (seamless loop)
+  CALL Msu1.kill.MTD vpMsu1
+  NEW Msu1.CLS.PTR vpMsu1
+  CALL Msu1.playVideo.MTD vpMsu1
+  jmp _videoLoop
 ```
 
 ### Tile Conversion Pipeline
@@ -279,14 +299,22 @@ SNES-VideoPlayer/
 │   │   ├── config/               # macros, globals, structs
 │   │   ├── core/                 # boot, oop, nmi, dma, screen, input
 │   │   ├── definition/           # SNES/MSU-1 register definitions
-│   │   ├── object/               # OOP classes (msu1, background, brightness, etc.)
-│   │   ├── text/                 # "PRESS START" string
+│   │   ├── object/audio/         # SPC700 audio engine + driver
+│   │   ├── object/msu1/          # MSU-1 video streaming
+│   │   ├── object/background/    # framebuffers, text layers
+│   │   ├── object/brightness/    # screen fade controller
+│   │   ├── text/                 # title screen strings
 │   │   ├── main.script           # Boot entry
 │   │   └── videoplayer.script    # Main playback loop
 │   ├── data/font/                # 8x8 font graphics
+│   ├── data/sounds/              # Sound effect source WAVs
 │   ├── build/                    # Build output
 │   ├── distribution/             # Final ROM
-│   └── tools/                    # WLA-DX assembler toolchain
+│   └── tools/                    # WLA-DX assembler + snesbrr
+│
+├── tools/
+│   ├── fxpak_push.py             # Push ROM to FXPAK Pro via USB
+│   └── fxpak_debug.py            # FXPAK crash dump reader
 │
 └── README.md
 ```
